@@ -1,0 +1,95 @@
+# =============================================================================
+# Pipeline do ems-gap-filler
+#
+# stages: build -> test -> package
+#   build        : compila main + test (feedback rapido de erro de compilacao)
+#   test         : mvn verify  -> surefire (unit *Test.java) + failsafe (*IT.java)
+#                  os ITs usam Testcontainers -> exigem Docker (servico docker:dind).
+#                  Testcontainers fala direto com o daemon do dind via $DOCKER_HOST,
+#                  nao precisa do CLI `docker` na imagem maven.
+#   docker-build : so na branch main -> builda a imagem (push pro registry comentado)
+#
+# Roda nos shared runners do GitLab.com (SaaS) por padrao - eles suportam dind
+# privilegiado. Se preferir um runner self-hosted (ex: lg-prd), descomente `tags:`.
+# =============================================================================
+
+stages:
+  - build
+  - test
+  - package
+
+variables:
+  MAVEN_OPTS: "-Dmaven.repo.local=$CI_PROJECT_DIR/.m2/repository -Dorg.slf4j.simpleLogger.log.org.apache.maven.cli.transfer.Slf4jMavenTransferListener=WARN"
+  MAVEN_CLI_OPTS: "--batch-mode --errors --show-version --no-transfer-progress"
+  # --- Docker-in-Docker (necessario pros Testcontainers) ---
+  DOCKER_HOST: "tcp://docker:2376"
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_TLS_VERIFY: "1"
+  DOCKER_CERT_PATH: "/certs/client"
+  TESTCONTAINERS_HOST_OVERRIDE: "docker"
+  TESTCONTAINERS_RYUK_DISABLED: "true"
+
+cache:
+  key: "$CI_COMMIT_REF_SLUG"
+  paths:
+    - .m2/repository
+
+# -----------------------------------------------------------------------------
+build:
+  stage: build
+  image: maven:3.9-eclipse-temurin-21
+  # tags: [lg-prd]
+  script:
+    - "mvn $MAVEN_CLI_OPTS -DskipTests clean compile test-compile"
+  artifacts:
+    paths:
+      - target/
+    expire_in: 1 hour
+
+# -----------------------------------------------------------------------------
+test:
+  stage: test
+  image: maven:3.9-eclipse-temurin-21
+  # tags: [lg-prd]
+  needs: ["build"]
+  services:
+    - name: docker:27-dind
+      alias: docker
+  variables:
+    DOCKER_DRIVER: overlay2
+  before_script:
+    - "sleep 15"   # da tempo do servico docker:dind subir antes dos ITs
+  script:
+    - "mvn $MAVEN_CLI_OPTS verify"
+  artifacts:
+    when: always
+    paths:
+      - target/*.jar
+    reports:
+      junit:
+        - target/surefire-reports/TEST-*.xml
+        - target/failsafe-reports/TEST-*.xml
+    expire_in: 1 month
+
+# -----------------------------------------------------------------------------
+docker-build:
+  stage: package
+  image: docker:27
+  # tags: [lg-prd]
+  needs: ["test"]
+  services:
+    - name: docker:27-dind
+      alias: docker
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  before_script:
+    - "until docker info >/dev/null 2>&1; do sleep 2; done"
+  script:
+    - "docker build -t ems-gap-filler:$CI_COMMIT_SHORT_SHA -t ems-gap-filler:latest ."
+    # Push pro Container Registry do GitLab (descomente quando o registry estiver habilitado):
+    # - "echo \"$CI_REGISTRY_PASSWORD\" | docker login -u \"$CI_REGISTRY_USER\" --password-stdin \"$CI_REGISTRY\""
+    # - "docker tag ems-gap-filler:$CI_COMMIT_SHORT_SHA $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    # - "docker tag ems-gap-filler:latest $CI_REGISTRY_IMAGE:latest"
+    # - "docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    # - "docker push $CI_REGISTRY_IMAGE:latest"
+    - "echo imagem ems-gap-filler:$CI_COMMIT_SHORT_SHA construida"

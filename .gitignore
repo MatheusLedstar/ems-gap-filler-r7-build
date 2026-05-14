@@ -1,0 +1,44 @@
+# Build
+target/
+*.class
+*.jar
+!mvnw.jar
+.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.eclipse/
+.project
+.classpath
+.settings/
+
+# Spring Boot
+application-local.yml
+application-local.properties
+application-secrets.yml
+
+# Secrets
+*.secret
+*.key
+*.pem
+*.p12
+.env
+.env.*
+!.env.example
+secrets/
+
+# Logs
+logs/
+*.log
+
+# Java
+hs_err_pid*.log
+
+# Mac
+.DS_Store
+
+# Misc
+tmp/
+*.bak

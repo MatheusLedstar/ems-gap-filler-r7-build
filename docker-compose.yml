@@ -1,0 +1,84 @@
+# EMS Gap Filler - deploy para 150.150.251.112
+# Roda como container Docker isolado na mesma rede docker_gwbridge dos
+# postgres que ja existe no servidor (172.25.0.3=HOM, 172.25.0.7=PRD).
+
+services:
+  ems-gap-filler:
+    image: ems-gap-filler:0.2.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ems-gap-filler
+    restart: unless-stopped
+
+    environment:
+      # Profile -> escolher 'hom' pra TESTES seguro, 'prd' so apos validacao
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-hom}
+
+      # Banco - default 172.25.0.3 (HOM). Mudar pra 172.25.0.7 (PRD) so apos validar.
+      DB_URL: ${DB_URL:-jdbc:postgresql://172.25.0.3:5432/energymanagementsystem}
+      DB_USER: ${DB_USER:-ems_user}
+      DB_PASSWORD: ${DB_PASSWORD}
+
+      # Kill-switches do GapFillerScheduler:
+      #   RECENT_ENABLED=false  -> nao roda o sweep RECENT horario (default OFF ate validacao manual)
+      #   HISTORICAL_ENABLED    -> drena a fila de backfill (POST /api/v1/backfill). true = backfill manual funciona;
+      #                            false = o worker fica inerte (so Flyway + API), nao toca em telemetria.
+      GAPFILLER_RECENT_ENABLED: ${GAPFILLER_RECENT_ENABLED:-false}
+      GAPFILLER_HISTORICAL_ENABLED: ${GAPFILLER_HISTORICAL_ENABLED:-true}
+
+      # Bind 127.0.0.1 only - acesso so via docker exec
+      SERVER_ADDRESS: 127.0.0.1
+      SERVER_PORT: 8080
+
+      # Timezone Manaus (mesmo do banco)
+      TZ: America/Manaus
+
+      # Crypto key pra pgp_sym_decrypt das senhas FTP em ems.ftp_source
+      GAPFILLER_CRYPTO_PGP_KEY: ${GAPFILLER_CRYPTO_PGP_KEY:-}
+
+    networks:
+      - ems-network
+
+    # Health check Docker - reinicia se ficar 3 ciclos UNHEALTHY
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://127.0.0.1:8080/actuator/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+
+    # Limites de recursos pra nao impactar outros containers do servidor
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 768M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    # Logs estruturados em json-file com rotacao - sem inundar disco do host
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+    # Volume opcional pra dump de troubleshooting (heap dumps, etc)
+    volumes:
+      - gap-filler-tmp:/tmp/gap-filler
+
+networks:
+  ems-network:
+    # Junta o container do worker na MESMA rede docker dos postgres do ambiente, pra alcancar
+    # 172.25.0.3 (HOM) / 172.25.0.7 (PRD) por IP. Descubra a rede certa no servidor com:
+    #   docker ps                                            # acha o container do timescaledb
+    #   docker inspect <pg-container> -f '{{json .NetworkSettings.Networks}}'
+    # e seta EMS_DOCKER_NETWORK no .env. Comecar pela rede da HOM; depois trocar pra rede de PRD.
+    # (Os medidores 10.x sao alcancados via o roteamento do host, nao precisam de rede docker.)
+    external: true
+    name: ${EMS_DOCKER_NETWORK:-docker_gwbridge}
+
+volumes:
+  gap-filler-tmp:
