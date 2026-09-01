@@ -107,3 +107,5 @@ Rodam na ponte Windows `150.150.251.133` — ver `EMS-WORKER-RESUME.txt` para o 
 Recon dos medidores (`ems-recon.ps1`), introspecção do banco via túnel (`ems-db-tunnel.ps1`),
 deploy (`ems-deploy.ps1`, `deploy-server.sh`). O `ems-deploy-homolog.ps1` está **deprecado**
 (baixa o JAR antigo `v0.1.1`) — usar `ems-deploy.ps1`.
+
+<!-- verificado em 2026-09-01 -->
